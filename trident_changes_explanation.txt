@@ -1,0 +1,18 @@
+This file outlines important changes I have made to Trident.
+
+1) The backbone of the Circumgalactic Dictionary is the make_my_ray function, contained in the trident/ray_generator.py file.
+
+def make_my_ray(ds, start_position, end_position, instruments=instruments, snr=18,
+             lines='all', ftype="PartType0", fields=None,
+             solution_filename=None, data_filename=None, spectral_filename=None, complete_filename=None,
+             trajectory=None, redshift=None, field_parameters=None,
+             setup_function=None, load_kwargs=None,
+             line_database='MortCashTri.txt', ionization_table=None, interactive=False, halo=None, lims=None, add_qso_spectrum=False, add_milky_way_foreground=False, apply_lsf=True, store_observables=False)
+             
+This function standardizes certain settings, like instrument properties, that we keep constant, and adds flexibility where we want it. This function uses the standard make_simple_ray function in Trident, but it makes a simple ray for each instrument along the line of sight. The standard Trident function creates a new h5 file which contains spectral data from the ray. 
+
+This function generates a new HDF5 file where it deposits all metadata about the halo and particle data/history only about the gas that contributed to the spectra. All of our new functionality from yt carries over to these files. These files are then shared with our observing collaborators who perform a Voigt fitting process and deposit their calculated observables in the same file; this same file is then passed to the machine learning team to perform their analysis. 
+
+2) Another important change was expanding our spectral line database. The default Trident line list has ~214 spectral lines; our database has ~1100. This update also included updating certain spectral line info to fit with NIST data. This required combining data from two spectral line sources that were not fully machine-readable. 
+
+3) Changes to trident/absorption_spectrum/absorption_spectrum.py and trident/spectrum_generator.py. The "noise" field Trident deposits into files is actually a seperate but related quantity Trident calls the "flux error". This field is not reflective of the Gaussian noise actually generated for the spectra. This has been corrected so that "flux error" and "noise" are both stored and clearly delineated. 
