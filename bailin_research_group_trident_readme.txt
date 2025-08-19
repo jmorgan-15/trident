@@ -14,7 +14,15 @@ $python -m pip install --user -e .
 
 This should prompt the download. If not, try running the test script contained in this folder BUT MAKE SURE TO MOVE IT OUTSIDE OF YT/TRIDENT FOLDERS FIRST
 
-The main addition is the make_my_ray function. As a reminder, this function takes quite a few arguments:
+3) Run raw_spectra_generator_test.py
+
+After installing both yt and Trident, this file should run with no errors. 
+
+
+
+
+
+My main addition is the make_my_ray function, defined in trident/spectrum_generator.py. As a reminder, this function takes quite a few arguments:
 
 my_ray=trident.make_my_ray(ds, start_position, end_position, snr, data_filename, spectral_filename, complete_filename, line_database, interactive)
 
