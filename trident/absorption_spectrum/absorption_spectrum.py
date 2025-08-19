@@ -338,6 +338,7 @@ class AbsorptionSpectrum(object):
                                     'normalization': normalization,
                                     'index': index})
 
+
     def make_spectrum(self, input_object, output_file=None,
                       line_list_file=None, output_absorbers_file=None,
                       use_peculiar_velocity=True,
@@ -502,6 +503,8 @@ class AbsorptionSpectrum(object):
             mylog.warning('Spectrum is totally empty!')
         else:
             self.flux_field = np.exp(-self.tau_field)
+            #Although this value is used, it's not saved as a variable. I make it a part of the object just like "flux" and "tau"
+            self.error_field = self.error_func(self.flux_field)   
 
         if output_file is None:
             pass
@@ -539,7 +542,13 @@ class AbsorptionSpectrum(object):
 
             The array of flux values
         """
-        return np.sqrt(flux*self.snr)/self.snr
+        ###We modified the error from this
+        
+        
+        #return np.sqrt(flux*self.snr)/self.snr
+        #return np.sqrt(flux/self.snr)      #above is literal original line, this one is mathematically equivalent. Not sure why they use longer form
+        #to this
+        return flux/self.snr
 
     def _apply_observing_redshift(self, field_data, use_peculiar_velocity,
                                  observing_redshift):
@@ -1192,10 +1201,11 @@ class AbsorptionSpectrum(object):
         f = open(filename, 'w')
         f.write("# wavelength[A] tau flux flux_error\n")
         for i in range(self.lambda_field.size):
-            f.write("%e %e %e %e\n" % (self.lambda_field[i],
+            f.write("%e %e %e %e %e\n" % (self.lambda_field[i],
                                     self.tau_field[i],
                                     self.flux_field[i],
-                                    self.error_func(self.flux_field[i])))
+                                    self.error_field[i],
+                                    self.noise_field[i]))  #Now saving noise field
         f.close()
 
     @parallel_root_only
@@ -1209,23 +1219,47 @@ class AbsorptionSpectrum(object):
         col1 = pyfits.Column(name='wavelength', format='E', array=self.lambda_field)
         col2 = pyfits.Column(name='tau', format='E', array=self.tau_field)
         col3 = pyfits.Column(name='flux', format='E', array=self.flux_field)
-        col4 = pyfits.Column(name='flux_error', format='E', array=self.error_func(self.flux_field))
-        cols = pyfits.ColDefs([col1, col2, col3, col4])
+        col4 = pyfits.Column(name='flux_error', format='E', array=self.error_field)
+        col5 = pyfits.Column(name='noise', format='E', array=self.noise_field)
+        cols = pyfits.ColDefs([col1, col2, col3, col4, col5])
         tbhdu = pyfits.BinTableHDU.from_columns(cols)
         tbhdu.writeto(filename, overwrite=True)
 
     @parallel_root_only
-    def _write_spectrum_hdf5(self, filename):
+    def _write_spectrum_hdf5(self, file_obj, add_to_file=False, filename=None):
         """
         Write spectrum to an hdf5 file.
 
-        """
-        if self.tau_field is None:
-            return
-        mylog.info("Writing spectrum to hdf5 file: %s.", filename)
-        output = h5py.File(filename, 'w')
-        output.create_dataset('wavelength', data=self.lambda_field)
-        output.create_dataset('tau', data=self.tau_field)
-        output.create_dataset('flux', data=self.flux_field)
-        output.create_dataset('flux_error', data=self.error_func(self.flux_field))
-        output.close()
+        """  #initially this took only a string filename as an argument; I added some functionality to more easily use this function to write my own custom data files 
+        if add_to_file==False:
+            filename=file_obj
+            if self.tau_field is None:
+                return
+            mylog.info("Writing spectrum to hdf5 file: %s.", filename)
+            output = h5py.File(filename, 'w')
+            output.create_dataset('lambda', data=self.lambda_field)
+            output.create_dataset('tau', data=self.tau_field)
+            output.create_dataset('flux', data=self.flux_field)
+            output.create_dataset('flux_error', data=self.error_field)
+            try:
+              output.create_dataset('noise', data=self.noise_field)
+            except AttributeError:
+              print('this message should only appear if you made a spectrum with infinite SNR, ie, no noise. This is ok as long as you did it on purpose')
+              self.noise_field=np.zeros(self.flux_field.size)
+              output.create_dataset('noise', data=self.noise_field)
+            output.close()
+        elif add_to_file==True:
+            if self.tau_field is None:
+                return 
+            mylog.info("Writing spectrum to hdf5 file: %s.", filename)
+            output = file_obj
+            output.create_dataset('lambda', data=self.lambda_field)
+            output.create_dataset('tau', data=self.tau_field)
+            output.create_dataset('flux', data=self.flux_field)
+            output.create_dataset('flux_error', data=self.error_field)            
+            try:
+              output.create_dataset('noise', data=self.noise_field)
+            except AttributeError:
+              print('this message should only appear if you made a spectrum with infinite SNR, ie, no noise. This is ok as long as you did it on purpose')
+              self.noise_field=np.zeros(self.flux_field.size)
+              output.create_dataset('noise', data=self.noise_field)

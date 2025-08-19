@@ -680,6 +680,7 @@ class SpectrumGenerator(AbsorptionSpectrum):
                 (self.flux_field.shape, noise.shape))
         self.flux_field += noise
         self.snr = 1 / np.std(noise)
+        self.noise_field=noise   #ONLY ADDITION; needed to record Gaussian noise in file
 
     def apply_lsf(self, function=None, width=None, filename=None):
         """
