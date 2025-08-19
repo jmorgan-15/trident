@@ -62,7 +62,9 @@ from trident.utilities import \
 
 from trident.ray_generator import \
     make_simple_ray, \
-    make_compound_ray
+    make_compound_ray, \
+    make_my_ray
+
 
 from trident.roman import \
     to_roman, \

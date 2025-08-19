@@ -27,6 +27,17 @@ from yt.data_objects.static_output import \
 from trident.ion_balance import \
     atomic_number
 
+#########ADDITIONAL IMPORTS######################
+#this is actually the same thing as unyt_array, but unyt used to be a part of yt before becoming its own thing. Trident still uses it like its a party of yt, but if you look into the yt code, it just says "YTArray=unyt_array". Since we are messing with Trident code, "when in Rome"....so we use YTArray
+from yt.units import \
+    YTArray 
+from trident.spectrum_generator import \
+    SpectrumGenerator 
+
+import numpy as np
+import copy
+import h5py
+import shutil
 def make_simple_ray(dataset_file, start_position, end_position,
                     lines=None, ftype="gas", fields=None,
                     solution_filename=None, data_filename=None,
@@ -597,3 +608,185 @@ def _add_default_fields(ds, fields):
         fields.append(('gas', 'H_nuclei_density'))
 
     return fields
+    
+    
+##########################################################################################################################################################
+##################################################################ADDITIONS###############################################################################
+cos_grisms=['COS-G130M', 'COS-G160M', 'COS-G185M', 'COS-G225M', 'COS-G285M']
+grism_info=[[899, 1469, 0.00997, 'avg_COS_G130M.txt'], [1342, 1798, 0.01223, 'avg_COS_G160M.txt'], [1670, 2127, 0.037, None], [2070, 2527, 0.033, None], [2480, 3229, 0.04, None]]
+instruments={cos_grisms[i]:grism_info[i] for i in range(len(cos_grisms))}
+
+#cos_grisms=['COS-G130M', 'COS-G160M']
+#grism_info=[[1300, 1400, 0.01, 'avg_COS_G130M.txt'], [1405, 1777, 0.012, 'avg_COS_G160M.txt']]
+#grism_info=[[1300, 1400, 0.01, 'avg_COS_G130M.txt'], [1342, 1798, 0.01223, 'avg_COS_G160M.txt']]
+#instruments={cos_grisms[i]:grism_info[i] for i in range(len(cos_grisms))}
+#sgs=[trident.SpectrumGenerator(lambda_min=grism_info[i][0], lambda_max=grism_info[i][1], dlambda=grism_info[i][2], line_database='lines.txt') for i in range(3)]
+
+#These fields are only stored under 'gas', not 'PartType0'
+only_gas_fields=(('gas', 'entropy'), )
+#These fields are generated during the initial ray creation (NOT spectra creation). They are then used for spectra post-processing. They are searched for under the 'gas' keyword-- tried to put them under PartType0 and it led to cascading errors with units. Instead, just make a seperate 'gas' group in file and store there
+necessary_ray_fields={'velocity_los':'code_velocity', 'v_los':'dimensionless', 'redshift':'dimensionless',  'redshift_dopp':'dimensionless', 'redshift_eff':'dimensionless'}
+ray_fields_to_skip=('ParticleIDs', 'density', 'mass', 'metallicity', 'temperature', 'velocity_magnitude', 'x', 'y', 'z', 'H_nuclei_density', 'H_p0_number_density')
+#these are all properties that are also generated when you load up the hdf5 file as a dataset; ie, these properties are already listed under ds.derived_field_list
+
+#These suffixes are added to unit-converted data when the file loads up (halo and ray files). So we don't have to save any of the unit-ed quantities to the ray file when making it; if our gas prop has one of these as substring, we skip
+used_units=('_msun_pc3', '_flux_erg_s_cm2', '_ergcm3_s', '_solar', '_km2_s2', '_g_km', '_msun_yr', '_kpc', '_km_s', '_erg_s', '_gauss')
+
+ds_index_holder, ray_index_holder, common_values_holder=0, 0, 0
+groups=['Config', 'Header', 'halo_and_sub_properties', 'ray_properties', 'PartType5', 'PartType0']
+ray_prop_names=['ray_uv', 'ip_uv', 'ip', 'ip_d_along_ray', 'ip_coordinate', 'start_position', 'end_position']
+def make_my_ray(ds, start_position, end_position, instruments=instruments, snr=18,
+             lines='all', ftype="PartType0", fields=None,
+             solution_filename=None, data_filename=None, spectral_filename=None, complete_filename=None,
+             trajectory=None, redshift=None, field_parameters=None,
+             setup_function=None, load_kwargs=None,
+             line_database='MortCashTri.txt', ionization_table=None, interactive=False, halo=None, lims=None, add_qso_spectrum=False, add_milky_way_foreground=False, apply_lsf=True, store_observables=False):     
+  origin=YTArray(75000/2, units='code_length', registry=ds.unit_registry)
+  #data_filename is for the ray.h5 object; spectral filename is for the images/data files; complete_filename is for the final hdf5 file we make here     
+  #start and end positions are assumed to be input as either unyt_arrays or bare lists/arrays. If bare, assume in simulation coords. First thing we do is unscale the start and end points from kpc to code lengths
+
+  if hasattr(start_position, 'units'):
+    #start_position, end_position=start_position.to('code_length', registry=ds.unit_registry), end_position.to('code_length', registry=ds.unit_registry)  #for some reason this line breaks, but the line below does not
+    start_position, end_position=start_position.to(origin.units), end_position.to(origin.units)
+  else:
+    start_position, end_position=YTArray(start_position, units='code_length', registry=ds.unit_registry), YTArray(end_position, units='code_length', registry=ds.unit_registry)
+    #Now we find the unit vector of our ray, the impact parameter, and the unit vector from the origin to the impact point. We do all this before shifting the ray position to fit where yt thinks the actual particles are
+  ray_vec=end_position-start_position
+  ray_uvec=ray_vec.value/np.linalg.norm(ray_vec)  #unit vectors are ironically unitless
+  distance_along_ray=np.sum(-start_position*ray_uvec)  #dot product tells us how far along ray the point closest to the origin is
+  x=start_position+distance_along_ray*ray_uvec  #point along ray closest to origin; because origin=galactic center, can do next line easy:
+  ip=YTArray(np.linalg.norm(x), units='code_length', registry=ds.unit_registry)   #this is ip in code length units, but comes out of norm() unitless
+  uv_to_ip=x.value/ip.value
+    
+  #Now we make the actual ray
+  ray=make_simple_ray(ds, start_position=start_position+origin, end_position=end_position+origin, data_filename=data_filename, lines=lines, ftype='PartType0', line_database=line_database, fields=[('PartType0', 'ParticleIDs')])
+  dl=copy.deepcopy(ray.r['gas', 'dl'])
+  ray_props=[ray_uvec, uv_to_ip, ip, distance_along_ray, x, start_position, end_position]
+  #Everything has been calculated; now we just need to organize/store data in hdf5 file    
+  #First we copy/store metadata in a new file
+  with h5py.File(complete_filename, 'w') as f:
+    for grp in groups:
+      f.create_group(grp)
+    f['Config'].attrs['VORONOI'], f['Config'].attrs['RAY']=1, 1  
+    f['Config'].attrs['STORE_OBSERVABLES']=int(store_observables==True)
+  #trying to move away from using attrs, but this set-up is essential to reloading the data files, as yt assumes this arrangement. Same with header below
+    f['Header'].attrs['LineDatabase']=line_database
+    for key, value in ds.headvals.items():
+      if key=='NumPart_ThisFile':
+        f['Header'].attrs[key]=np.int32([len(ray.r['gas', 'ParticleIDs']), 0., 0., 0., 0., len(ds.r['PartType5', 'ParticleIDs'])])
+      else:
+        f['Header'].attrs[key]=value
+    for key, value in ds.hsvals.items():
+      f['halo_and_sub_properties'].create_dataset(key, data=value)
+  
+  #Now we store data about the ray itself 
+    for i in range(len(ray_props)):
+      f['ray_properties'].create_dataset(ray_prop_names[i], data=np.array(ray_props[i]))
+    
+    #Now we store particle data. First, create mask for gas data in ds object, ray object
+    common_values, ds_index, ray_index=np.intersect1d(ds.gas('ParticleIDs'), ray.r['gas', 'ParticleIDs'], assume_unique=True, return_indices=True)
+      
+    #We use our instruments to create spectral data from the ray
+    for inst_name, inst_props in instruments.items():   #generate/save spectra for different instruments
+      sg=SpectrumGenerator(lambda_min=inst_props[0], lambda_max=inst_props[1], dlambda=inst_props[2], line_database=line_database)
+      sg.make_spectrum(ray, lines=lines, store_observables=store_observables)
+      if add_qso_spectrum==True:
+        sg.add_qso_spectrum()
+      if add_milky_way_foreground==True:
+        sg.add_milky_way_foreground
+      if apply_lsf==True:
+        if isinstance(inst_props[3], str):
+          sg.apply_lsf(filename=inst_props[3])
+        else:
+          sg.apply_lsf(function='gaussian', width=4)     #until we get actual LSF files
+      if snr!=None:
+        sg.add_gaussian_noise(snr)
+      f['ray_properties'].create_group(inst_name)
+      sg._write_spectrum_hdf5(f['ray_properties'][inst_name], add_to_file=True, filename=complete_filename)
+      #if we're storing observables we want to put them in now
+      if store_observables==True: 
+        for line, properties in sg.line_observables_dict.items():
+          f['ray_properties'][inst_name].create_group(line)
+          for property_name, value in properties.items():
+            if property_name=='EW':
+              f['ray_properties'][inst_name][line].create_dataset(property_name, data=np.array(value))
+              continue
+            try:
+              f['ray_properties'][inst_name][line].create_dataset(property_name, data=np.array(value)[ray_index])
+            except IndexError as e:
+              print(property_name)
+              raise e
+      #f['ray_properties'].create_dataset(inst_name, data=np.array([sg.lambda_field, sg.tau_field, sg.flux_field, sg.error_field]))
+      if interactive==True:
+        sg.save_spectrum(spectral_filename+'_'+inst_name+'.txt')
+        #sg.plot_spectrum(title='Halo '+str(halo)+' IP='+str(format(ip.to('kpc'), '.3f'))+' '+inst_name, filename=spectral_filename+'_'+inst_name+'.pdf', lambda_limits=lims)
+        sg.plot_spectrum(filename=spectral_filename+'_'+inst_name+'.pdf', lambda_limits=lims)
+
+  
+    l_ray=ray.r['gas', 'l'][ray_index]  #this is a list of l values in the same order as ray properties will be in. We want to make a list of indeces for the ray and for the ds that go in order of increasing 'l'. We can zip these values with ds_index and ray_index to get a new order for both which goes in order of 'l' instead of randomly
+    placeholder1=list(zip(l_ray, ds_index, ray_index))
+    placeholder1.sort()  #sorts indeces by corresponding 'l' value
+    placeholder2=list(zip(*placeholder1))
+    common_values, ds_index, ray_index=np.array(placeholder2[0]), np.array(placeholder2[1]), np.array(placeholder2[2])  #These are now the right order of indeces to give particles in order along the ray
+    global ds_index_holder, ray_index_holder, common_values_holder
+    ds_index_holder, ray_index_holder, common_values_holder=ds_index, ray_index, common_values
+    #To keep all data in right order, need to use these "masks" on both ray object and ds object. Even though all ray object particles are used, they aren't in the same order (ie, ray_index is not just [0, 1, 2, 3....]). 
+    for field in ds.derived_field_list:
+      if 'PartType5' in field:  #if field tuple starts with PartType5
+        f['PartType5'].create_dataset(field[1], data=ds.bh(field[1]))
+      elif 'PartType0' in field: 
+      #elif 'PartType0' in field or 'gas' in field: #tried this line, but many fields are calculated to be the same for both gas, PartType0, so we get copies and it all breaks
+        if any(unit in field[1] for unit in used_units):
+          continue
+        if 'count' in field:
+          f['PartType0'].create_dataset(field[1], data=len(ray_index))
+        else:
+          print(field)
+          f['PartType0'].create_dataset(field[1], data=ds.r[field][ds_index])
+        #if '_84orientation_78' in field[1]:
+          #f['PartType0'].create_dataset(field[1], data=ds.gas(field[1], 78)[ds_index])
+        #elif '_78' in field[1]:
+          #f['PartType0'].create_dataset(field[1], data=ds.gas(field[1], 78, 78)[ds_index])
+        #else:
+          #f['PartType0'].create_dataset(field[1], data=ds.gas(field[1])[ds_index])
+    #this is annoying and a bit confusing, but in DATASETS 'entropy' is stored under 'gas', in RAYS it is stored under 'PartType0'. But it is the same values either way
+ 
+    for field in only_gas_fields:
+      #f['PartType0'].create_dataset(field[1], data=ds.gas(field[1])[ds_index]) 
+      f['PartType0'].create_dataset(field[1], data=ds.r[field][ds_index])
+      #f['PartType0'].create_dataset(field[1]+'_78', data=ds.gas(field[1], 78)[ds_index])
+      
+
+    #We take properties from the dataset first; some auto-generated properties in the ray may have the same name as properties I made up in the dataset. My own properties are better, so we take them. If we find the same property in the ray we just skip it
+    for field in ray.derived_field_list:
+      if field[1] in ray_fields_to_skip:
+        continue
+      if field[0]=='gas':
+        if field[1][:9]=='particle_':
+          print(field)
+        if field[1]=='dl':
+          data, units=dl[ray_index], 'code_length'
+          f['PartType0'].create_dataset(field[1], data=data.to(units, registry=ds.unit_registry))    
+        elif field[1]=='l':
+          #data, units=l_ray[ray_index], 'code_length'  #BAD this line doesn't work because the order of l_ray is already changed from what's on the disk
+          data, units=ray.r['gas', 'l'][ray_index], 'code_length'
+          f['PartType0'].create_dataset(field[1], data=data.to(units, registry=ds.unit_registry))    
+        elif field[1] in necessary_ray_fields.keys():
+          data, units=ray.r[field][ray_index], necessary_ray_fields[field[1]]
+          f['PartType0'].create_dataset(field[1], data=data.to(units, registry=ds.unit_registry))  
+        #elif 'gas' in field and (field[1]=='l' or 'number_density' in field[1] or 'ion_fraction'in field[1] or 'nuclei_density' in field[1]):
+        elif any(substr in field[1] for substr in ('number_density', 'nuclei_density')):
+          data, units=ray.r[field][ray_index], '1/cm**3'  
+          f['PartType0'].create_dataset(field[1], data=data.to(units, registry=ds.unit_registry))    
+        elif 'ion_fraction' in field[1]:
+          data, units=ray.r[field][ray_index], 'dimensionless'
+          f['PartType0'].create_dataset(field[1], data=data.to(units, registry=ds.unit_registry)) 
+          
+  #Finally done storing/organizing data; now just save hdf5 file. Note that we are saving several properties from ds that are normally calculated from TNG properties on disk when loaded with yt; for ray files, these properties will already be calculated and saved to disk. When you use load() on them the properties are needlessly recalculated, but nothing bad happens
+    f.close()
+  ray.close()
+  if interactive==True:
+    return load(complete_filename)
+  else:
+    return complete_filename
+  #return complete_filename
