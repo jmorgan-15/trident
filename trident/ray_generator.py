@@ -649,7 +649,7 @@ def make_my_ray(ds, start_position, end_position, instruments=instruments, snr=1
     start_position, end_position=YTArray(start_position, units='code_length', registry=ds.unit_registry), YTArray(end_position, units='code_length', registry=ds.unit_registry)
     #Now we find the unit vector of our ray, the impact parameter, and the unit vector from the origin to the impact point. We do all this before shifting the ray position to fit where yt thinks the actual particles are
   ray_vec=end_position-start_position
-  ray_uvec=ray_vec.value/np.linalg.norm(ray_vec)  #unit vectors are ironically unitless
+  ray_uvec=ray_vec.value/np.linalg.norm(ray_vec.value)  #unit vectors are ironically unitless
   distance_along_ray=np.sum(-start_position*ray_uvec)  #dot product tells us how far along ray the point closest to the origin is
   x=start_position+distance_along_ray*ray_uvec  #point along ray closest to origin; because origin=galactic center, can do next line easy:
   ip=YTArray(np.linalg.norm(x), units='code_length', registry=ds.unit_registry)   #this is ip in code length units, but comes out of norm() unitless
