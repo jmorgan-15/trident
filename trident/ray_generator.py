@@ -677,7 +677,8 @@ def make_my_ray(ds, start_position, end_position, instruments=instruments, snr=1
   #Now we store data about the ray itself 
     for i in range(len(ray_props)):
       f['ray_properties'].create_dataset(ray_prop_names[i], data=np.array(ray_props[i]))
-      
+
+    common_values, ds_index, ray_index=np.intersect1d(ds.gas('ParticleIDs'), ray.r['gas', 'ParticleIDs'], assume_unique=True, return_indices=True)
     #We use our instruments to create spectral data from the ray
     for inst_name, inst_props in instruments.items():   #generate/save spectra for different instruments
       sg=SpectrumGenerator(lambda_min=inst_props[0], lambda_max=inst_props[1], dlambda=inst_props[2], line_database=line_database)
@@ -715,7 +716,7 @@ def make_my_ray(ds, start_position, end_position, instruments=instruments, snr=1
         sg.plot_spectrum(filename=spectral_filename+'_'+inst_name+'.pdf', lambda_limits=lims)
 
   #Now we store particle data. First, create mask for gas data in ds object
-    common_values, ds_index, ray_index=np.intersect1d(ds.gas('ParticleIDs'), ray.r['gas', 'ParticleIDs'], assume_unique=True, return_indices=True)
+
     l_ray=ray.r['gas', 'l'][ray_index]  #this is a list of l values in the same order as ray properties will be in. We want to make a list of indeces for the ray and for the ds that go in order of increasing 'l'. We can zip these values with ds_index and ray_index to get a new order for both which goes in order of 'l' instead of randomly
     placeholder1=list(zip(l_ray, ds_index, ray_index))
     placeholder1.sort()  #sorts indeces by corresponding 'l' value
@@ -734,7 +735,7 @@ def make_my_ray(ds, start_position, end_position, instruments=instruments, snr=1
         if 'count' in field:
           f['PartType0'].create_dataset(field[1], data=len(ray_index))
         else:
-          print(field)
+          #print(field)
           f['PartType0'].create_dataset(field[1], data=ds.r[field][ds_index])
         #if '_84orientation_78' in field[1]:
           #f['PartType0'].create_dataset(field[1], data=ds.gas(field[1], 78)[ds_index])
