@@ -761,8 +761,8 @@ def make_my_ray(ds, start_position, end_position, instruments=instruments, snr=1
       if field[1] in ray_fields_to_skip:
         continue
       if field[0]=='gas':
-        if field[1][:9]=='particle_':
-          print(field)
+        #if field[1][:9]=='particle_':
+        #  print(field)
         if field[1]=='dl':
           data, units=dl[ray_index], 'code_length'
           f['PartType0'].create_dataset(field[1], data=data.to(units, registry=ds.unit_registry))    
