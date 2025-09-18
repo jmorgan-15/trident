@@ -2,6 +2,7 @@
 SpectrumGenerator class and member functions.
 
 """
+
 #-----------------------------------------------------------------------------
 # Copyright (c) 2016, Trident Development Team.
 #
@@ -37,8 +38,6 @@ import numpy as np
 import copy
 import h5py
 import shutil
-
-
 def make_simple_ray(dataset_file, start_position, end_position,
                     lines=None, ftype="gas", fields=None,
                     solution_filename=None, data_filename=None,
@@ -618,7 +617,6 @@ cos_grisms=['COS-G130M', 'COS-G160M', 'COS-G185M', 'COS-G225M', 'COS-G285M']
 grism_info=[[899, 1469, 0.00997, 'avg_COS_G130M.txt'], [1342, 1798, 0.01223, 'avg_COS_G160M.txt'], [1670, 2127, 0.037, None], [2070, 2527, 0.033, None], [2480, 3229, 0.04, None]]
 instruments={cos_grisms[i]:grism_info[i] for i in range(len(cos_grisms))}
 
-
 #These fields are only stored under 'gas', not 'PartType0'
 only_gas_fields=(('gas', 'entropy'), )
 #These fields are generated during the initial ray creation (NOT spectra creation). They are then used for spectra post-processing. They are searched for under the 'gas' keyword-- tried to put them under PartType0 and it led to cascading errors with units. Instead, just make a seperate 'gas' group in file and store there
@@ -679,6 +677,42 @@ def make_my_ray(ds, start_position, end_position, instruments=instruments, snr=1
   #Now we store data about the ray itself 
     for i in range(len(ray_props)):
       f['ray_properties'].create_dataset(ray_prop_names[i], data=np.array(ray_props[i]))
+      
+    #We use our instruments to create spectral data from the ray
+    for inst_name, inst_props in instruments.items():   #generate/save spectra for different instruments
+      sg=SpectrumGenerator(lambda_min=inst_props[0], lambda_max=inst_props[1], dlambda=inst_props[2], line_database=line_database)
+      sg.make_spectrum(ray, lines=lines, store_observables=store_observables)
+      if add_qso_spectrum==True:
+        sg.add_qso_spectrum()
+      if add_milky_way_foreground==True:
+        sg.add_milky_way_foreground
+      if apply_lsf==True:
+        if isinstance(inst_props[3], str):
+          sg.apply_lsf(filename=inst_props[3])
+        else:
+          sg.apply_lsf(function='gaussian', width=4)     #until we get actual LSF files
+      if snr!=None:
+        sg.add_gaussian_noise(snr)
+      f['ray_properties'].create_group(inst_name)
+      sg._write_spectrum_hdf5(f['ray_properties'][inst_name], add_to_file=True, filename=complete_filename)
+      #if we're storing observables we want to put them in now
+      if store_observables==True: 
+        for line, properties in sg.line_observables_dict.items():
+          f['ray_properties'][inst_name].create_group(line)
+          for property_name, value in properties.items():
+            if property_name=='EW':
+              f['ray_properties'][inst_name][line].create_dataset(property_name, data=np.array(value))
+              continue
+            try:
+              f['ray_properties'][inst_name][line].create_dataset(property_name, data=np.array(value)[ray_index])
+            except IndexError as e:
+              print(property_name)
+              raise e
+      #f['ray_properties'].create_dataset(inst_name, data=np.array([sg.lambda_field, sg.tau_field, sg.flux_field, sg.error_field]))
+      if interactive==True:
+        sg.save_spectrum(spectral_filename+'_'+inst_name+'.txt')
+        #sg.plot_spectrum(title='Halo '+str(halo)+' IP='+str(format(ip.to('kpc'), '.3f'))+' '+inst_name, filename=spectral_filename+'_'+inst_name+'.pdf', lambda_limits=lims)
+        sg.plot_spectrum(filename=spectral_filename+'_'+inst_name+'.pdf', lambda_limits=lims)
 
   #Now we store particle data. First, create mask for gas data in ds object
     common_values, ds_index, ray_index=np.intersect1d(ds.gas('ParticleIDs'), ray.r['gas', 'ParticleIDs'], assume_unique=True, return_indices=True)
@@ -721,8 +755,8 @@ def make_my_ray(ds, start_position, end_position, instruments=instruments, snr=1
       if field[1] in ray_fields_to_skip:
         continue
       if field[0]=='gas':
-        if field[1][:9]=='particle_':
-          print(field)
+        #if field[1][:9]=='particle_':
+        #  print(field)
         if field[1]=='dl':
           data, units=dl[ray_index], 'code_length'
           f['PartType0'].create_dataset(field[1], data=data.to(units, registry=ds.unit_registry))    
@@ -741,49 +775,6 @@ def make_my_ray(ds, start_position, end_position, instruments=instruments, snr=1
           data, units=ray.r[field][ray_index], 'dimensionless'
           f['PartType0'].create_dataset(field[1], data=data.to(units, registry=ds.unit_registry)) 
           
-    #Finally, we use instruments to derive spectral data and save line info if storing observables
-    #We use our instruments to create spectral data from the ray
-    for inst_name, inst_props in instruments.items():   #generate/save spectra for different instruments
-      sg=SpectrumGenerator(lambda_min=inst_props[0], lambda_max=inst_props[1], dlambda=inst_props[2], line_database=line_database)
-      sg.make_spectrum(ray, lines=lines, store_observables=store_observables)
-      if add_qso_spectrum==True:
-        sg.add_qso_spectrum()
-      if add_milky_way_foreground==True:
-        sg.add_milky_way_foreground
-      if apply_lsf==True:
-        if isinstance(inst_props[3], str):
-          sg.apply_lsf(filename=inst_props[3])
-        else:
-          sg.apply_lsf(function='gaussian', width=4)     #until we get actual LSF files
-      if snr!=None:
-        sg.add_gaussian_noise(snr)
-      f['ray_properties'].create_group(inst_name)
-      sg._write_spectrum_hdf5(f['ray_properties'][inst_name], add_to_file=True, filename=complete_filename)
-      #if we're storing observables we want to put them in now
-      if store_observables==True: 
-        for line, properties in sg.line_observables_dict.items():
-          try:
-            f['ray_properties'][inst_name].create_group(line)
-          except AttributeError as e:
-            if isinstance(line, int):
-              pass
-            else:
-              raise e
-          for property_name, value in properties.items():
-            if property_name=='EW':
-              f['ray_properties'][inst_name][line].create_dataset(property_name, data=np.array(value))
-              continue
-            try:
-              f['ray_properties'][inst_name][line].create_dataset(property_name, data=np.array(value)[ray_index])
-            except IndexError as e:
-              print(property_name)
-              raise e
-      #f['ray_properties'].create_dataset(inst_name, data=np.array([sg.lambda_field, sg.tau_field, sg.flux_field, sg.error_field]))
-      if interactive==True:
-        sg.save_spectrum(spectral_filename+'_'+inst_name+'.txt')
-        sg.plot_spectrum(title='Halo '+str(halo)+' IP='+str(format(ip.to('kpc'), '.3f'))+' '+inst_name, filename=spectral_filename+'_'+inst_name+'.png', lambda_limits=lims)
-          
-    
   #Finally done storing/organizing data; now just save hdf5 file. Note that we are saving several properties from ds that are normally calculated from TNG properties on disk when loaded with yt; for ray files, these properties will already be calculated and saved to disk. When you use load() on them the properties are needlessly recalculated, but nothing bad happens
     f.close()
   ray.close()
