@@ -735,7 +735,7 @@ def make_my_ray(ds, start_position, end_position, instruments=instruments, snr=1
         if 'count' in field:
           f['PartType0'].create_dataset(field[1], data=len(ray_index))
         else:
-          print(field)
+          #print(field)
           f['PartType0'].create_dataset(field[1], data=ds.r[field][ds_index])
         #if '_84orientation_78' in field[1]:
           #f['PartType0'].create_dataset(field[1], data=ds.gas(field[1], 78)[ds_index])
