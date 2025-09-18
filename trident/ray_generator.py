@@ -617,12 +617,6 @@ cos_grisms=['COS-G130M', 'COS-G160M', 'COS-G185M', 'COS-G225M', 'COS-G285M']
 grism_info=[[899, 1469, 0.00997, 'avg_COS_G130M.txt'], [1342, 1798, 0.01223, 'avg_COS_G160M.txt'], [1670, 2127, 0.037, None], [2070, 2527, 0.033, None], [2480, 3229, 0.04, None]]
 instruments={cos_grisms[i]:grism_info[i] for i in range(len(cos_grisms))}
 
-#cos_grisms=['COS-G130M', 'COS-G160M']
-#grism_info=[[1300, 1400, 0.01, 'avg_COS_G130M.txt'], [1405, 1777, 0.012, 'avg_COS_G160M.txt']]
-#grism_info=[[1300, 1400, 0.01, 'avg_COS_G130M.txt'], [1342, 1798, 0.01223, 'avg_COS_G160M.txt']]
-#instruments={cos_grisms[i]:grism_info[i] for i in range(len(cos_grisms))}
-#sgs=[trident.SpectrumGenerator(lambda_min=grism_info[i][0], lambda_max=grism_info[i][1], dlambda=grism_info[i][2], line_database='lines.txt') for i in range(3)]
-
 #These fields are only stored under 'gas', not 'PartType0'
 only_gas_fields=(('gas', 'entropy'), )
 #These fields are generated during the initial ray creation (NOT spectra creation). They are then used for spectra post-processing. They are searched for under the 'gas' keyword-- tried to put them under PartType0 and it led to cascading errors with units. Instead, just make a seperate 'gas' group in file and store there
