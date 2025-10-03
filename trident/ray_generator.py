@@ -699,16 +699,31 @@ def make_my_ray(ds, start_position, end_position, instruments=instruments, snr=1
       #if we're storing observables we want to put them in now
       if store_observables==True: 
         for line, properties in sg.line_observables_dict.items():
-          f['ray_properties'][inst_name].create_group(line)
-          for property_name, value in properties.items():
-            if property_name=='EW':
-              f['ray_properties'][inst_name][line].create_dataset(property_name, data=np.array(value))
-              continue
-            try:
-              f['ray_properties'][inst_name][line].create_dataset(property_name, data=np.array(value)[ray_index])
-            except IndexError as e:
-              print(property_name)
+          try:
+            f['ray_properties'][inst_name].create_group(line)
+            for property_name, value in properties.items():
+                if property_name=='EW':
+                  f['ray_properties'][inst_name][line].create_dataset(property_name, data=np.array(value))
+                  continue
+                try:
+                  f['ray_properties'][inst_name][line].create_dataset(property_name, data=np.array(value)[ray_index])
+                except IndexError as e:
+                  print(property_name)
+                  raise e
+          except AttributeError as e:
+            if isinstance(line, int):
+              pass
+            else:
               raise e
+          #for property_name, value in properties.items():
+            #if property_name=='EW':
+              #f['ray_properties'][inst_name][line].create_dataset(property_name, data=np.array(value))
+              #continue
+            #try:
+              #f['ray_properties'][inst_name][line].create_dataset(property_name, data=np.array(value)[ray_index])
+            #except IndexError as e:
+              #print(property_name)
+              #raise e
       #f['ray_properties'].create_dataset(inst_name, data=np.array([sg.lambda_field, sg.tau_field, sg.flux_field, sg.error_field]))
       if interactive==True:
         sg.save_spectrum(spectral_filename+'_'+inst_name+'.txt')
